@@ -215,7 +215,7 @@ data "aws_iam_policy_document" "origin" {
       effect = "Deny"
 
       condition {
-        test     = "NotStringLike"
+        test     = "StringNotLike"
         variable = "aws:Referer"
         values   = compact(concat(var.allowed_referers, [var.referer_secret]))
       }

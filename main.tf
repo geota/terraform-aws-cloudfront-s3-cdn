@@ -14,24 +14,34 @@ locals {
 
 
   resources = [
-    "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*",
+    "${data.aws_s3_bucket.origin.arn}",
+    "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"
   ]
 
   actions = {
+    BucketAccess = [
+      "s3:ListBucket",
+    ],
+
     ReadAccess = [
-      "s3:Get*",
-      "s3:List*"
+      "s3:GetObject",
     ]
+
     FullAccess = [
       "s3:*"
     ]
   }
 
+  deny_ip_access = flatten(concat(var.read_access_ips, var.full_access_ips))
+
   ip_access = merge(
+    { for i in flatten(concat(var.read_access_ips, var.full_access_ips)) : "BucketAccess" => i... },
     { for i in var.read_access_ips : "ReadAccess" => i... },
     { for i in var.full_access_ips : "FullAccess" => i... }
   )
 }
+
+data "aws_caller_identity" "current" {}
 
 module "origin_label" {
   source     = "git::https://github.com/cloudposse/terraform-terraform-label.git?ref=tags/0.4.0"
@@ -52,7 +62,7 @@ data "aws_region" "current" {
 
 resource "aws_s3_bucket" "origin" {
   count         = signum(length(var.origin_bucket)) == 1 ? 0 : 1
-  bucket        = module.origin_label.id
+  bucket        = signum(length(var.domain_name)) == 1 ? var.domain_name : module.origin_label.id
   acl           = "private"
   tags          = module.origin_label.tags
   force_destroy = var.origin_force_destroy
@@ -69,12 +79,12 @@ resource "aws_s3_bucket" "origin" {
   }
 
   dynamic "cors_rule" {
-    for_each = length(distinct(compact(concat(var.cors_allowed_origins, var.aliases)))) != 0 ? [true] : []
+    for_each = length(distinct(compact(concat(var.cors_allowed_origins, var.aliases, [var.domain_name])))) != 0 ? [true] : []
     content {
       allowed_headers = var.cors_allowed_headers
       allowed_methods = var.cors_allowed_methods
       allowed_origins = sort(
-        distinct(compact(concat(var.cors_allowed_origins, var.aliases))),
+        distinct(compact(concat(var.cors_allowed_origins, var.aliases, [var.domain_name]))),
       )
       expose_headers  = var.cors_expose_headers
       max_age_seconds = var.cors_max_age_seconds
@@ -156,13 +166,56 @@ data "aws_iam_policy_document" "origin" {
   }
 
   dynamic "statement" {
+    for_each = length(var.website_config) == 0 ? [] : [true]
+    content {
+      actions = ["s3:*"]
+      resources = [
+        "${data.aws_s3_bucket.origin.arn}/*",
+        "${data.aws_s3_bucket.origin.arn}"
+      ]
+
+      principals {
+        type        = "AWS"
+        identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
+    }
+  }
+
+
+  dynamic "statement" {
     for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
     content {
       actions   = ["s3:GetObject"]
       resources = ["${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"]
 
+      principals {
+        type        = "*"
+        identifiers = ["*"]
+      }
+
       condition {
         test     = "StringLike"
+        variable = "aws:Referer"
+        values   = compact(concat(var.allowed_referers, [var.referer_secret]))
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
+    content {
+      actions   = ["s3:GetObject"]
+      resources = ["${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"]
+
+      principals {
+        type        = "*"
+        identifiers = ["*"]
+      }
+
+      effect = "Deny"
+
+      condition {
+        test     = "NotStringLike"
         variable = "aws:Referer"
         values   = compact(concat(var.allowed_referers, [var.referer_secret]))
       }
@@ -187,6 +240,30 @@ data "aws_iam_policy_document" "origin" {
         test     = "IpAddress"
         variable = "aws:SourceIp"
         values   = ip.value
+      }
+
+      resources = local.resources
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(var.website_config) != 0 && length(local.deny_ip_access) > 0 ? [true] : []
+    iterator = ip
+    content {
+      sid    = "DenyByIP"
+      effect = "Deny"
+
+      actions = ["s3:*"]
+
+      principals {
+        type        = "*"
+        identifiers = ["*"]
+      }
+
+      condition {
+        test     = "NotIpAddress"
+        variable = "aws:SourceIp"
+        values   = local.deny_ip_access
       }
 
       resources = local.resources
@@ -465,9 +542,9 @@ resource "aws_cloudfront_distribution" "default" {
 module "dns" {
   source           = "git::https://github.com/cloudposse/terraform-aws-route53-alias.git?ref=tags/0.3.0"
   enabled          = var.enabled && (length(var.parent_zone_id) > 0 || length(var.parent_zone_name) > 0) && (var.create_cloudfront_distribution || length(var.website_config) > 0) ? true : false
-  aliases          = var.aliases
+  aliases          = distinct(compact(concat([var.domain_name], var.aliases))) # alias must match bucket name exactly
   parent_zone_id   = var.parent_zone_id
   parent_zone_name = var.parent_zone_name
-  target_dns_name  = var.create_cloudfront_distribution ? aws_cloudfront_distribution.default[0].domain_name : data.aws_s3_bucket.origin.website_endpoint
+  target_dns_name  = var.create_cloudfront_distribution ? aws_cloudfront_distribution.default[0].domain_name : "s3-website-${data.aws_s3_bucket.origin.region}.amazonaws.com"
   target_zone_id   = var.create_cloudfront_distribution ? aws_cloudfront_distribution.default[0].hosted_zone_id : data.aws_s3_bucket.origin.hosted_zone_id
 }

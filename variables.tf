@@ -431,6 +431,7 @@ variable "allowed_referers" {
 variable "referer_secret" {
   description = "(Optional) Enforce all requests pass through the CloudFront CDN. This secret will be injected as the referer in the CloudFront CDN. This is combined with the allowed referers in the S3 bucket policy, to ONLY allow requests through the CF CDN ensure allowed_referers is not set"
   type        = string
+  default     = null
 }
 
 variable "read_access_ips" {
@@ -443,4 +444,10 @@ variable "full_access_ips" {
   default     = []
   type        = list(string)
   description = "list of ips to get full access to the bucket"
+}
+
+variable "domain_name" {
+  type        = string
+  default     = null
+  description = "(Optional) Domain name to use as the bucket name to allow for Route53 DNS A records for the buckets website endpoint"
 }

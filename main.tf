@@ -185,8 +185,11 @@ data "aws_iam_policy_document" "origin" {
   dynamic "statement" {
     for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
     content {
-      actions   = ["s3:GetObject"]
-      resources = ["${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"]
+      actions   = ["s3:GetObject", "s3:ListObject"]
+      resources = [
+        data.aws_s3_bucket.origin.arn,
+        "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"
+      ]
 
       principals {
         type        = "*"
@@ -204,9 +207,11 @@ data "aws_iam_policy_document" "origin" {
   dynamic "statement" {
     for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
     content {
-      actions   = ["s3:GetObject"]
-      resources = ["${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"]
-
+      actions   = ["s3:*"]
+      resources = [
+        data.aws_s3_bucket.origin.arn,
+        "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"
+      ]
       principals {
         type        = "*"
         identifiers = ["*"]

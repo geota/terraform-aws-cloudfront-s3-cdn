@@ -1,3 +1,38 @@
+locals {
+  bucket = join(
+    "",
+    compact(
+      concat([var.origin_bucket], concat([""], aws_s3_bucket.origin.*.id)),
+    ),
+  )
+
+  bucket_domain_name = length(var.website_config) != 0 ? data.aws_s3_bucket.origin.website_endpoint : (var.use_regional_s3_endpoint ? format(
+    "%s.s3-%s.amazonaws.com",
+    local.bucket,
+    data.aws_s3_bucket.selected.region,
+  ) : format(var.bucket_domain_format, local.bucket))
+
+
+  resources = [
+    "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*",
+  ]
+
+  actions = {
+    ReadAccess = [
+      "s3:Get*",
+      "s3:List*"
+    ]
+    FullAccess = [
+      "s3:*"
+    ]
+  }
+
+  ip_access = merge(
+    { for i in var.read_access_ips : "ReadAccess" => i... },
+    { for i in var.full_access_ips : "FullAccess" => i... }
+  )
+}
+
 module "origin_label" {
   source     = "git::https://github.com/cloudposse/terraform-terraform-label.git?ref=tags/0.4.0"
   namespace  = var.namespace
@@ -119,6 +154,45 @@ data "aws_iam_policy_document" "origin" {
       identifiers = [aws_cloudfront_origin_access_identity.default.iam_arn]
     }
   }
+
+  dynamic "statement" {
+    for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
+    content {
+      actions   = ["s3:GetObject"]
+      resources = ["${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"]
+
+      condition {
+        test     = "StringLike"
+        variable = "aws:Referer"
+        values   = compact(concat(var.allowed_referers, [var.referer_secret]))
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = local.ip_access
+    iterator = ip
+    content {
+      sid    = "${ip.key}ByIP"
+      effect = "Allow"
+
+      actions = lookup(local.actions, ip.key)
+
+      principals {
+        type        = "*"
+        identifiers = ["*"]
+      }
+
+      condition {
+        test     = "IpAddress"
+        variable = "aws:SourceIp"
+        values   = ip.value
+      }
+
+      resources = local.resources
+    }
+  }
+
 
   # Support replication ARNs
   dynamic "statement" {
@@ -273,26 +347,12 @@ data "aws_s3_bucket" "selected" {
   bucket = local.bucket == "" ? var.static_s3_bucket : local.bucket
 }
 
-locals {
-  bucket = join(
-    "",
-    compact(
-      concat([var.origin_bucket], concat([""], aws_s3_bucket.origin.*.id)),
-    ),
-  )
-
-  bucket_domain_name = length(var.website_config) != 0 ? data.aws_s3_bucket.origin.website_endpoint : (var.use_regional_s3_endpoint ? format(
-    "%s.s3-%s.amazonaws.com",
-    local.bucket,
-    data.aws_s3_bucket.selected.region,
-  ) : format(var.bucket_domain_format, local.bucket))
-}
-
 data "aws_s3_bucket" "origin" {
   bucket = local.bucket
 }
 
 resource "aws_cloudfront_distribution" "default" {
+  count               = var.create_cloudfront_distribution ? 1 : 0
   enabled             = var.enabled
   is_ipv6_enabled     = var.is_ipv6_enabled
   comment             = var.comment
@@ -312,6 +372,14 @@ resource "aws_cloudfront_distribution" "default" {
     domain_name = local.bucket_domain_name
     origin_id   = module.distribution_label.id
     origin_path = var.origin_path
+
+    dynamic "custom_header" {
+      for_each = var.referer_secret == null ? [] : [var.referer_secret]
+      content {
+        name  = "Referer"
+        value = var.referer_secret
+      }
+    }
 
     dynamic "s3_origin_config" {
       for_each = length(var.website_config) == 0 ? [true] : []
@@ -396,10 +464,10 @@ resource "aws_cloudfront_distribution" "default" {
 
 module "dns" {
   source           = "git::https://github.com/cloudposse/terraform-aws-route53-alias.git?ref=tags/0.3.0"
-  enabled          = var.enabled && length(var.parent_zone_id) > 0 || length(var.parent_zone_name) > 0 ? true : false
+  enabled          = var.enabled && (length(var.parent_zone_id) > 0 || length(var.parent_zone_name) > 0) && (var.create_cloudfront_distribution || length(var.website_config) > 0) ? true : false
   aliases          = var.aliases
   parent_zone_id   = var.parent_zone_id
   parent_zone_name = var.parent_zone_name
-  target_dns_name  = aws_cloudfront_distribution.default.domain_name
-  target_zone_id   = aws_cloudfront_distribution.default.hosted_zone_id
+  target_dns_name  = var.create_cloudfront_distribution ? aws_cloudfront_distribution.default[0].domain_name : data.aws_s3_bucket.origin.website_endpoint
+  target_zone_id   = var.create_cloudfront_distribution ? aws_cloudfront_distribution.default[0].hosted_zone_id : data.aws_s3_bucket.origin.hosted_zone_id
 }

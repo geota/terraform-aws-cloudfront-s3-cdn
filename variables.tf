@@ -417,3 +417,30 @@ variable "origin_read_timeout" {
   description = "(Optional) The Custom Read timeout, in seconds. By default, AWS enforces a limit of 60. But you can request an increase. Ignored if not configured with a static s3 website endpoint - i.e. website_config is set."
   default     = "60"
 }
+
+variable "create_cloudfront_distribution" {
+  description = "(Optional) Set to false to disable creation of the CloudFront Distribution CDN"
+  default     = true
+}
+
+variable "allowed_referers" {
+  description = "(Optional) Set to only allow requests to the s3 bucket from these referers"
+  default     = []
+}
+
+variable "referer_secret" {
+  description = "(Optional) Enforce all requests pass through the CloudFront CDN. This secret will be injected as the referer in the CloudFront CDN. This is combined with the allowed referers in the S3 bucket policy, to ONLY allow requests through the CF CDN ensure allowed_referers is not set"
+  type        = string
+}
+
+variable "read_access_ips" {
+  default     = []
+  type        = list(string)
+  description = "list of ips to get read access to the bucket"
+}
+
+variable "full_access_ips" {
+  default     = []
+  type        = list(string)
+  description = "list of ips to get full access to the bucket"
+}

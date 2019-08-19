@@ -165,9 +165,11 @@ data "aws_iam_policy_document" "origin" {
     }
   }
 
+  # Allow root account principal root access
   dynamic "statement" {
     for_each = length(var.website_config) == 0 ? [] : [true]
     content {
+      sid     = "AllowCurrentRoot"
       actions = ["s3:*"]
       resources = [
         "${data.aws_s3_bucket.origin.arn}/*",
@@ -181,11 +183,12 @@ data "aws_iam_policy_document" "origin" {
     }
   }
 
-
+  # Allow read  with matching referer secret
   dynamic "statement" {
     for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
     content {
-      actions   = ["s3:GetObject", "s3:ListObject"]
+      sid     = "AllowByReferer"
+      actions = ["s3:GetObject", "s3:ListObject"]
       resources = [
         data.aws_s3_bucket.origin.arn,
         "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"
@@ -204,20 +207,23 @@ data "aws_iam_policy_document" "origin" {
     }
   }
 
+  # Deny any request not from current account which doesnt match referer secret
   dynamic "statement" {
     for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
     content {
-      actions   = ["s3:*"]
+      sid     = "DenyByReferer"
+      actions = ["s3:*"]
       resources = [
         data.aws_s3_bucket.origin.arn,
         "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"
       ]
-      principals {
-        type        = "*"
-        identifiers = ["*"]
-      }
 
       effect = "Deny"
+
+      not_principals {
+        type        = "AWS"
+        identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+      }
 
       condition {
         test     = "StringNotLike"
@@ -227,6 +233,7 @@ data "aws_iam_policy_document" "origin" {
     }
   }
 
+  # Allow by IP
   dynamic "statement" {
     for_each = local.ip_access
     iterator = ip
@@ -251,6 +258,7 @@ data "aws_iam_policy_document" "origin" {
     }
   }
 
+  # Deny by IP
   dynamic "statement" {
     for_each = length(var.website_config) != 0 && length(local.deny_ip_access) > 0 ? [true] : []
     iterator = ip
@@ -357,6 +365,7 @@ data "aws_iam_policy_document" "replication" {
   count = signum(length(var.replication_source_principal_arns))
 
   statement {
+    sid = "AllowReplication"
     principals {
       type        = "AWS"
       identifiers = var.replication_source_principal_arns
@@ -380,6 +389,7 @@ data "aws_iam_policy_document" "deployment" {
   count = length(keys(var.deployment_arns))
 
   statement {
+    sid     = "AllowDeployment"
     actions = var.deployment_actions
 
     resources = flatten([

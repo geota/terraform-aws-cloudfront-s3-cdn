@@ -365,7 +365,7 @@ data "aws_iam_policy_document" "replication" {
   count = signum(length(var.replication_source_principal_arns))
 
   statement {
-    sid = "AllowReplication"
+    sid = "AllowReplication${count.index}"
     principals {
       type        = "AWS"
       identifiers = var.replication_source_principal_arns
@@ -389,7 +389,7 @@ data "aws_iam_policy_document" "deployment" {
   count = length(keys(var.deployment_arns))
 
   statement {
-    sid     = "AllowDeployment"
+    sid     = "AllowDeployment${count.index}"
     actions = var.deployment_actions
 
     resources = flatten([

@@ -165,24 +165,6 @@ data "aws_iam_policy_document" "origin" {
     }
   }
 
-  # Allow root account principal root access
-  dynamic "statement" {
-    for_each = length(var.website_config) == 0 ? [] : [true]
-    content {
-      sid     = "AllowCurrentRoot"
-      actions = ["s3:*"]
-      resources = [
-        "${data.aws_s3_bucket.origin.arn}/*",
-        "${data.aws_s3_bucket.origin.arn}"
-      ]
-
-      principals {
-        type        = "AWS"
-        identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
-      }
-    }
-  }
-
   # Allow read  with matching referer secret
   dynamic "statement" {
     for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
@@ -201,32 +183,6 @@ data "aws_iam_policy_document" "origin" {
 
       condition {
         test     = "StringLike"
-        variable = "aws:Referer"
-        values   = compact(concat(var.allowed_referers, [var.referer_secret]))
-      }
-    }
-  }
-
-  # Deny any request not from current account which doesnt match referer secret
-  dynamic "statement" {
-    for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
-    content {
-      sid     = "DenyByReferer"
-      actions = ["s3:*"]
-      resources = [
-        data.aws_s3_bucket.origin.arn,
-        "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"
-      ]
-
-      effect = "Deny"
-
-      not_principals {
-        type        = "AWS"
-        identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
-      }
-
-      condition {
-        test     = "StringNotLike"
         variable = "aws:Referer"
         values   = compact(concat(var.allowed_referers, [var.referer_secret]))
       }

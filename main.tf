@@ -32,8 +32,6 @@ locals {
     ]
   }
 
-  deny_ip_access = flatten(concat(var.read_access_ips, var.full_access_ips))
-
   ip_access = merge(
     { for i in flatten(concat(var.read_access_ips, var.full_access_ips)) : "BucketAccess" => i... },
     { for i in var.read_access_ips : "ReadAccess" => i... },
@@ -213,32 +211,6 @@ data "aws_iam_policy_document" "origin" {
       resources = local.resources
     }
   }
-
-  # Deny by IP
-  dynamic "statement" {
-    for_each = length(var.website_config) != 0 && length(local.deny_ip_access) > 0 ? [true] : []
-    iterator = ip
-    content {
-      sid    = "DenyByIP"
-      effect = "Deny"
-
-      actions = ["s3:*"]
-
-      principals {
-        type        = "*"
-        identifiers = ["*"]
-      }
-
-      condition {
-        test     = "NotIpAddress"
-        variable = "aws:SourceIp"
-        values   = local.deny_ip_access
-      }
-
-      resources = local.resources
-    }
-  }
-
 
   # Support replication ARNs
   dynamic "statement" {

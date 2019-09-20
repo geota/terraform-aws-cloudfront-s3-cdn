@@ -32,6 +32,10 @@ locals {
     ]
   }
 
+
+  deny_ip_access    = flatten(concat(var.read_access_ips, var.full_access_ips))
+  ip_whitelist_arns = distinct(concat(keys(var.deployment_arns), var.replication_source_principal_arns))
+
   ip_access = merge(
     { for i in flatten(concat(var.read_access_ips, var.full_access_ips)) : "BucketAccess" => i... },
     { for i in var.read_access_ips : "ReadAccess" => i... },
@@ -143,29 +147,23 @@ resource "aws_s3_bucket_policy" "default" {
 }
 
 data "aws_iam_policy_document" "origin" {
-  statement {
-    actions   = ["s3:GetObject"]
-    resources = ["${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"]
+  dynamic "statement" {
+    for_each = length(var.website_config) != 0 ? [] : [true]
+    content {
+      actions = ["s3:GetObject", "s3:ListBucket"]
+      resources = [data.aws_s3_bucket.origin.arn,
+      "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"]
 
-    principals {
-      type        = "CanonicalUser"
-      identifiers = [aws_cloudfront_origin_access_identity.default.s3_canonical_user_id]
-    }
-  }
-
-  statement {
-    actions   = ["s3:ListBucket"]
-    resources = [data.aws_s3_bucket.origin.arn]
-
-    principals {
-      type        = "CanonicalUser"
-      identifiers = [aws_cloudfront_origin_access_identity.default.s3_canonical_user_id]
+      principals {
+        type        = "CanonicalUser"
+        identifiers = [aws_cloudfront_origin_access_identity.default.s3_canonical_user_id]
+      }
     }
   }
 
   # Allow read  with matching referer secret
   dynamic "statement" {
-    for_each = compact(concat(var.allowed_referers, [var.referer_secret]))
+    for_each = length(var.website_config) != 0 ? compact(concat(var.allowed_referers, [var.referer_secret])) : []
     content {
       sid     = "AllowByReferer"
       actions = ["s3:GetObject", "s3:ListBucket"]
@@ -186,6 +184,45 @@ data "aws_iam_policy_document" "origin" {
       }
     }
   }
+
+
+  # Deny by IP
+  dynamic "statement" {
+    for_each = length(var.website_config) != 0 && length(local.deny_ip_access) > 0 ? [true] : []
+    iterator = ip
+    content {
+      sid    = "DenyByIP"
+      effect = "Deny"
+
+      actions = ["s3:*"]
+
+      # either this applies to everyone or we whitelist certain arns
+      dynamic "not_principals" {
+        for_each = length(local.ip_whitelist_arns) != 0 ? [true] : []
+        content {
+          type        = "AWS"
+          identifiers = local.ip_whitelist_arns
+        }
+      }
+
+      dynamic "principals" {
+        for_each = length(local.ip_whitelist_arns) != 0 ? [] : [true]
+        content {
+          type        = "*"
+          identifiers = ["*"]
+        }
+      }
+
+      condition {
+        test     = "NotIpAddress"
+        variable = "aws:SourceIp"
+        values   = local.deny_ip_access
+      }
+
+      resources = local.resources
+    }
+  }
+
 
   # Allow by IP
   dynamic "statement" {

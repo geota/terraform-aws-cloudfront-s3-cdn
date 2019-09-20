@@ -14,7 +14,7 @@ locals {
 
 
   resources = [
-    "${data.aws_s3_bucket.origin.arn}",
+    data.aws_s3_bucket.origin.arn,
     "${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"
   ]
 
@@ -148,18 +148,18 @@ data "aws_iam_policy_document" "origin" {
     resources = ["${data.aws_s3_bucket.origin.arn}${coalesce(var.origin_path, "/")}*"]
 
     principals {
-      type        = "AWS"
-      identifiers = [aws_cloudfront_origin_access_identity.default.iam_arn]
+      type        = "CanonicalUser"
+      identifiers = [aws_cloudfront_origin_access_identity.default.s3_canonical_user_id]
     }
   }
 
   statement {
     actions   = ["s3:ListBucket"]
-    resources = ["${data.aws_s3_bucket.origin.arn}"]
+    resources = [data.aws_s3_bucket.origin.arn]
 
     principals {
-      type        = "AWS"
-      identifiers = [aws_cloudfront_origin_access_identity.default.iam_arn]
+      type        = "CanonicalUser"
+      identifiers = [aws_cloudfront_origin_access_identity.default.s3_canonical_user_id]
     }
   }
 

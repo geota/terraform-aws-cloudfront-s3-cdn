@@ -33,8 +33,7 @@ locals {
   }
 
 
-  deny_ip_access    = flatten(concat(var.read_access_ips, var.full_access_ips))
-  ip_whitelist_arns = distinct(concat(keys(var.deployment_arns), var.replication_source_principal_arns))
+  deny_ip_access = flatten(concat(var.read_access_ips, var.full_access_ips))
 
   ip_access = merge(
     { for i in flatten(concat(var.read_access_ips, var.full_access_ips)) : "BucketAccess" => i... },
@@ -186,7 +185,7 @@ data "aws_iam_policy_document" "origin" {
   }
 
 
-  # Deny by IP
+  # Deny Read by IP (public bucket)
   dynamic "statement" {
     for_each = length(var.website_config) != 0 && length(local.deny_ip_access) > 0 ? [true] : []
     iterator = ip
@@ -194,23 +193,11 @@ data "aws_iam_policy_document" "origin" {
       sid    = "DenyByIP"
       effect = "Deny"
 
-      actions = ["s3:*"]
+      actions = ["s3:GetObject"]
 
-      # either this applies to everyone or we whitelist certain arns
-      dynamic "not_principals" {
-        for_each = length(local.ip_whitelist_arns) != 0 ? [true] : []
-        content {
-          type        = "AWS"
-          identifiers = local.ip_whitelist_arns
-        }
-      }
-
-      dynamic "principals" {
-        for_each = length(local.ip_whitelist_arns) != 0 ? [] : [true]
-        content {
-          type        = "*"
-          identifiers = ["*"]
-        }
+      principals {
+        type        = "*"
+        identifiers = ["*"]
       }
 
       condition {
